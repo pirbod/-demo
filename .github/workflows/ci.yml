@@ -10,7 +10,7 @@ jobs:
   test-and-cleanup:
     runs-on: ubuntu-latest
     steps:
-      # Check out the repository
+      # Check out the repository code
       - name: Checkout Code
         uses: actions/checkout@v2
 
@@ -29,7 +29,7 @@ jobs:
 
       # Create a local Kubernetes cluster using Kind (Kubernetes IN Docker)
       - name: Create Kind Cluster
-        uses: crazymax/setup-kind@v1
+        uses: crazymax/ghaction-setup-kind@v1
         with:
           version: v0.17.0  # Specify a Kind version
 
@@ -39,12 +39,12 @@ jobs:
         with:
           version: 'v1.25.0'  # Use a version compatible with Kind
 
-      # Apply Terraform configuration to provision the namespace
+      # Apply Terraform configuration to provision the namespace and infrastructure
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
         # This step creates the Kubernetes namespace (and any other infrastructure)
-      
+
       # Deploy the Kubernetes manifests (secrets, app components, monitoring, network policy)
       - name: Deploy Kubernetes Manifests
         run: |
