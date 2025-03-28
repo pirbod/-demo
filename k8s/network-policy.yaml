@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: verkstedt-demo
+spec:
+  # Empty 'podSelector' means the policy applies to all pods in this namespace.
+  podSelector: {}
+  policyTypes:
+    # Denies all ingress (inbound) and egress (outbound) traffic unless explicitly allowed by another policy.
+    - Ingress
+    - Egress

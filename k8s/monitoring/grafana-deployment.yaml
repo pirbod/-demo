@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: verkstedt-demo
+spec:
+  replicas: 1
+  # Must match the template labels below.
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana
+          ports:
+            - containerPort: 3000
+          # Resource requests/limits help ensure stable scheduling and avoid resource conflicts.
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Probes using Grafana's health endpoint: '/api/health'.
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+  namespace: verkstedt-demo
+spec:
+  # Routes traffic to pods labeled 'app=grafana'.
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      # Typically 3000 is Grafana's default UI port.
