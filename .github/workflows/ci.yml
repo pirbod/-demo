@@ -10,75 +10,84 @@ jobs:
   test-and-cleanup:
     runs-on: ubuntu-latest
     steps:
-      # Check out the repository code
+      # 1. Check out the repository code
       - name: Checkout Code
         uses: actions/checkout@v2
 
-      # Set up Terraform using HashiCorp's official action
+      # 2. Set up Terraform using HashiCorp's official action
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.3.6  # Specify your desired Terraform version
+          terraform_version: 1.3.6  # Specify the Terraform version to use
 
-      # Initialize and validate Terraform code in the terraform/ directory
+      # 3. Initialize and validate Terraform code (in terraform/ directory)
       - name: Terraform Init and Validate
         working-directory: terraform
         run: |
           terraform init
           terraform validate
 
-      # Create a local Kubernetes cluster using Kind (Kubernetes IN Docker)
-      - name: Create Kind Cluster
-        uses: crazymax/ghaction-setup-kind@v1
-        with:
-          version: v0.17.0  # Specify a Kind version
+      # 4. Install Kind (Kubernetes IN Docker) manually
+      - name: Install Kind
+        run: |
+          # Download the Kind binary for Linux
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.17.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          # Confirm Kind installation (optional)
+          kind version
 
-      # Set up kubectl to interact with the Kind cluster
+      # 5. Create a Kind cluster
+      - name: Create Kind Cluster
+        run: |
+          # This creates a new Kind cluster named 'verkstedt-cluster'
+          kind create cluster --name verkstedt-cluster
+
+      # 6. Set up kubectl to interact with the Kind cluster
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
         with:
-          version: 'v1.25.0'  # Use a version compatible with Kind
+          version: 'v1.25.0'  # Ensure this version is compatible with Kind
 
-      # Apply Terraform configuration to provision the namespace and infrastructure
+      # 7. Apply Terraform configuration (creates the namespace and any other infra)
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
-        # This step creates the Kubernetes namespace (and any other infrastructure)
+        # This step provisions the Kubernetes namespace (verkstedt-demo) and other infra as defined
 
-      # Deploy the Kubernetes manifests (secrets, app components, monitoring, network policy)
+      # 8. Deploy the Kubernetes manifests (secrets, deployments, services, network policies)
       - name: Deploy Kubernetes Manifests
         run: |
-          # Create secrets first
+          # Deploy secrets first
           kubectl apply -f secrets/
-          # Then deploy all components (nginx, postgres, Prometheus, Grafana, etc.)
+          # Deploy application and monitoring components (nginx, postgres, Prometheus, Grafana, etc.)
           kubectl apply -f k8s/
-        # Ensure that your manifests refer to the namespace created by Terraform (verkstedt-demo)
+        # Ensure the manifests reference the namespace (verkstedt-demo) created via Terraform
 
-      # Wait for the deployments to become available
+      # 9. Wait for deployments to be ready before testing
       - name: Wait for Deployments to be Ready
         run: |
           kubectl wait --for=condition=available --timeout=120s deployment/nginx -n verkstedt-demo
           kubectl wait --for=condition=available --timeout=120s deployment/postgres -n verkstedt-demo
           kubectl wait --for=condition=available --timeout=120s deployment/prometheus -n verkstedt-demo
           kubectl wait --for=condition=available --timeout=120s deployment/grafana -n verkstedt-demo
-        # This ensures that pods are running before tests begin
+        # This ensures all pods are running before tests execute
 
-      # Run basic tests (for example, verifying the nginx service is accessible)
+      # 10. Run basic tests (e.g., verifying that the nginx service is accessible)
       - name: Run Tests
         run: |
-          # Running a temporary pod to test connectivity to the nginx service
           kubectl run curl-test --image=curlimages/curl --restart=Never --rm -i -- \
             curl -s http://nginx-service.verkstedt-demo.svc.cluster.local
-        # Additional tests (e.g., checking health endpoints) can be added as needed
+        # You can add additional test commands as needed
 
-      # Clean up the deployed Kubernetes resources by deleting the namespace
+      # 11. Cleanup: Delete the namespace to remove all deployed resources
       - name: Cleanup Kubernetes Resources
         run: |
           kubectl delete namespace verkstedt-demo --ignore-not-found=true
-        # Deleting the namespace cleans up all resources deployed in it
+        # Deleting the namespace cleans up all pods, services, and configurations deployed within it
 
-      # Destroy the Terraform-managed infrastructure to ensure full cleanup
+      # 12. Destroy Terraform-managed infrastructure for complete cleanup
       - name: Terraform Destroy
         working-directory: terraform
         run: terraform destroy -auto-approve
-        # This will tear down the namespace and any resources that were provisioned via Terraform
+        # This tears down any resources created via Terraform
