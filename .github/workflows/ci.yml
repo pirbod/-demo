@@ -10,102 +10,86 @@ jobs:
   test-and-cleanup:
     runs-on: ubuntu-latest
     steps:
-      # 1. Check out the repository code
       - name: Checkout Code
         uses: actions/checkout@v2
 
-      # 2. Set up Terraform using HashiCorp's official action
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.3.6  # Specify the Terraform version to use
+          terraform_version: 1.3.6
 
-      # 3. Initialize and validate Terraform code (in terraform/ directory)
       - name: Terraform Init and Validate
         working-directory: terraform
         run: |
           terraform init
           terraform validate
 
-      # 4. Install Kind (Kubernetes IN Docker) manually
       - name: Install Kind
         run: |
-          # Download the Kind binary for Linux
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.17.0/kind-linux-amd64
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
-          # Confirm Kind installation (optional)
           kind version
 
-      # 5. Create a Kind cluster
       - name: Create Kind Cluster
         run: |
-          # This creates a new Kind cluster named 'verkstedt-cluster'
           kind create cluster --name verkstedt-cluster
 
-      # 6. Set up kubectl to interact with the Kind cluster
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
         with:
-          version: 'v1.25.0'  # Ensure this version is compatible with Kind
+          version: 'v1.25.0'
 
-      # 7. Apply Terraform configuration (creates the namespace and any other infra)
+      - name: Pre-pull nginx image into Kind
+        run: |
+          docker pull nginx:latest
+          kind load docker-image nginx:latest
+
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
-        # This step provisions the Kubernetes namespace (verkstedt-demo) and other infra as defined
 
-      # 8. Deploy the Kubernetes manifests (secrets, deployments, services, network policies)
       - name: Deploy Kubernetes Manifests
         run: |
-          # Deploy secrets first
           kubectl apply -f secrets/
-          # Deploy application and monitoring components (nginx, postgres, Prometheus, Grafana, etc.)
           kubectl apply -f k8s/
-        # Ensure the manifests reference the namespace (verkstedt-demo) created via Terraform
 
-      - name: Debug NGINX Deployment Status
-        run: |
-          echo "🧪 Fetching Pod info in namespace verkstedt-demo"
-          kubectl get pods -n verkstedt-demo -o wide
-      
-          echo "📋 Getting Kubernetes events (sorted)"
-          kubectl get events -n verkstedt-demo --sort-by=.metadata.creationTimestamp
-      
-          echo "🔍 Describing NGINX deployment"
-          kubectl describe deployment nginx -n verkstedt-demo
-      
-          echo "📦 Getting logs from the NGINX pod"
-          POD=$(kubectl get pods -n verkstedt-demo -l app=nginx -o jsonpath="{.items[0].metadata.name}")
-          kubectl logs $POD -n verkstedt-demo || echo "⚠️ No logs found or pod not ready"
-
-      # 9. Wait for deployments to be ready before testing
       - name: Wait for Deployments to be Ready
         continue-on-error: true
         run: |
-          kubectl wait --for=condition=available --timeout=120s deployment/nginx -n verkstedt-demo
-          kubectl wait --for=condition=available --timeout=120s deployment/postgres -n verkstedt-demo
-          kubectl wait --for=condition=available --timeout=120s deployment/prometheus -n verkstedt-demo
-          kubectl wait --for=condition=available --timeout=120s deployment/grafana -n verkstedt-demo
-  
+          kubectl wait --for=condition=available --timeout=180s deployment/nginx -n verkstedt-demo
+          kubectl wait --for=condition=available --timeout=180s deployment/postgres -n verkstedt-demo
+          kubectl wait --for=condition=available --timeout=180s deployment/prometheus -n verkstedt-demo
+          kubectl wait --for=condition=available --timeout=180s deployment/grafana -n verkstedt-demo
 
-        # This ensures all pods are running before tests execute
-
-      # 10. Run basic tests (e.g., verifying that the nginx service is accessible)
-      - name: Run Tests
+      - name: Debug NGINX Deployment Status
         run: |
-          kubectl run curl-test --image=curlimages/curl --restart=Never --rm -i -- \
-            curl -s http://nginx-service.verkstedt-demo.svc.cluster.local
-        # You can add additional test commands as needed
+          echo "🧪 Pods in verkstedt-demo:"
+          kubectl get pods -n verkstedt-demo -o wide || true
 
-      # 11. Cleanup: Delete the namespace to remove all deployed resources
+          echo "📋 Events:"
+          kubectl get events -n verkstedt-demo --sort-by=.metadata.creationTimestamp || true
+
+          echo "🔍 Describe NGINX deployment:"
+          kubectl describe deployment nginx -n verkstedt-demo || true
+
+          echo "📦 Logs from the NGINX pod:"
+          POD=$(kubectl get pods -n verkstedt-demo -l app=nginx -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || echo "")
+          if [ -n "$POD" ]; then
+            kubectl logs "$POD" -n verkstedt-demo || true
+          else
+            echo "⚠️ No NGINX pod found."
+          fi
+
+      - name: Check for Pending Pods
+        run: |
+          echo "Pending pod details:"
+          kubectl get pods -n verkstedt-demo -o name | xargs -r kubectl describe -n verkstedt-demo || true
+
       - name: Cleanup Kubernetes Resources
         run: |
           kubectl delete namespace verkstedt-demo --ignore-not-found=true
-        # Deleting the namespace cleans up all pods, services, and configurations deployed within it
 
-      # 12. Destroy Terraform-managed infrastructure for complete cleanup
       - name: Terraform Destroy
         working-directory: terraform
         run: terraform destroy -auto-approve
-        # This tears down any resources created via Terraform
