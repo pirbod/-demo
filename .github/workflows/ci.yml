@@ -10,11 +10,11 @@ jobs:
   test-and-cleanup:
     runs-on: ubuntu-latest
     steps:
-      # Checkout the repository code
+      # Step 1: Checkout the code
       - name: Checkout Code
         uses: actions/checkout@v2
 
-      # Set up Terraform CLI
+      # Step 2: Set up Terraform
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -26,7 +26,7 @@ jobs:
           terraform init
           terraform validate
 
-      # Install Kind CLI
+      # Step 3: Install Kind CLI
       - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.17.0/kind-linux-amd64
@@ -34,35 +34,42 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
           kind version
 
-      # Create the Kind cluster
+      # Step 4: Create Kind Cluster (with retry logic)
       - name: Create Kind Cluster
         run: |
-          kind create cluster --name verkstedt-cluster
+          for i in {1..3}; do
+            kind create cluster --name verkstedt-cluster && break || sleep 10
+          done
 
-      # Set up kubectl CLI
+      # Step 5: Verify Kind cluster is up
+      - name: Verify Kind Cluster Is Ready
+        run: |
+          kubectl cluster-info --context kind-verkstedt-cluster
+
+      # Step 6: Set up kubectl
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'v1.25.0'
 
-      # Pre-pull and load the nginx image into Kind (to avoid external pull delays or failures)
+      # Step 7: Pre-pull nginx image and load into Kind
       - name: Pre-pull nginx image into Kind
         run: |
           docker pull nginx:latest
           kind load docker-image nginx:latest --name verkstedt-cluster
 
-      # Apply Terraform (provisions namespace, etc.)
+      # Step 8: Apply Terraform (provision namespace, etc.)
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
 
-      # Deploy all Kubernetes resources
+      # Step 9: Deploy Kubernetes manifests
       - name: Deploy Kubernetes Manifests
         run: |
           kubectl apply -f secrets/
           kubectl apply -f k8s/
 
-      # Wait for deployments to become available (non-blocking for now)
+      # Step 10: Wait for all Deployments to be ready (continue-on-error to allow debug)
       - name: Wait for Deployments to be Ready
         continue-on-error: true
         run: |
@@ -71,7 +78,7 @@ jobs:
           kubectl wait --for=condition=available --timeout=180s deployment/prometheus -n verkstedt-demo
           kubectl wait --for=condition=available --timeout=180s deployment/grafana -n verkstedt-demo
 
-      # Debugging step: Describe and log everything if something failed
+      # Step 11: Debug deployment if readiness failed
       - name: Debug NGINX Deployment Status
         run: |
           echo "🧪 Pods:"
@@ -91,17 +98,17 @@ jobs:
             echo "⚠️ No NGINX pod found."
           fi
 
-      # Optional extra debugging if no pods appear
+      # Step 12: Describe any pending pods (scheduling failures, etc.)
       - name: Describe Pending Pods (if any)
         run: |
-          echo "Describing all pods (may show scheduling issues):"
           kubectl get pods -n verkstedt-demo -o name | xargs -r kubectl describe -n verkstedt-demo || true
 
-      # Clean up all resources
+      # Step 13: Cleanup Kubernetes resources
       - name: Cleanup Kubernetes Resources
         run: |
           kubectl delete namespace verkstedt-demo --ignore-not-found=true
 
+      # Step 14: Cleanup Terraform-managed infra
       - name: Terraform Destroy
         working-directory: terraform
         run: terraform destroy -auto-approve
