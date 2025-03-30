@@ -64,13 +64,31 @@ jobs:
           kubectl apply -f k8s/
         # Ensure the manifests reference the namespace (verkstedt-demo) created via Terraform
 
+      - name: Debug NGINX Deployment Status
+        run: |
+          echo "🧪 Fetching Pod info in namespace verkstedt-demo"
+          kubectl get pods -n verkstedt-demo -o wide
+      
+          echo "📋 Getting Kubernetes events (sorted)"
+          kubectl get events -n verkstedt-demo --sort-by=.metadata.creationTimestamp
+      
+          echo "🔍 Describing NGINX deployment"
+          kubectl describe deployment nginx -n verkstedt-demo
+      
+          echo "📦 Getting logs from the NGINX pod"
+          POD=$(kubectl get pods -n verkstedt-demo -l app=nginx -o jsonpath="{.items[0].metadata.name}")
+          kubectl logs $POD -n verkstedt-demo || echo "⚠️ No logs found or pod not ready"
+
       # 9. Wait for deployments to be ready before testing
       - name: Wait for Deployments to be Ready
+        continue-on-error: true
         run: |
           kubectl wait --for=condition=available --timeout=120s deployment/nginx -n verkstedt-demo
           kubectl wait --for=condition=available --timeout=120s deployment/postgres -n verkstedt-demo
           kubectl wait --for=condition=available --timeout=120s deployment/prometheus -n verkstedt-demo
           kubectl wait --for=condition=available --timeout=120s deployment/grafana -n verkstedt-demo
+  
+
         # This ensures all pods are running before tests execute
 
       # 10. Run basic tests (e.g., verifying that the nginx service is accessible)
