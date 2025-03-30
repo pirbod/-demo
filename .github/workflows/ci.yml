@@ -10,9 +10,11 @@ jobs:
   test-and-cleanup:
     runs-on: ubuntu-latest
     steps:
+      # Checkout the repository code
       - name: Checkout Code
         uses: actions/checkout@v2
 
+      # Set up Terraform CLI
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -24,6 +26,7 @@ jobs:
           terraform init
           terraform validate
 
+      # Install Kind CLI
       - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.17.0/kind-linux-amd64
@@ -31,29 +34,35 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
           kind version
 
+      # Create the Kind cluster
       - name: Create Kind Cluster
         run: |
           kind create cluster --name verkstedt-cluster
 
+      # Set up kubectl CLI
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'v1.25.0'
 
+      # Pre-pull and load the nginx image into Kind (to avoid external pull delays or failures)
       - name: Pre-pull nginx image into Kind
         run: |
           docker pull nginx:latest
-          kind load docker-image nginx:latest
+          kind load docker-image nginx:latest --name verkstedt-cluster
 
+      # Apply Terraform (provisions namespace, etc.)
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
 
+      # Deploy all Kubernetes resources
       - name: Deploy Kubernetes Manifests
         run: |
           kubectl apply -f secrets/
           kubectl apply -f k8s/
 
+      # Wait for deployments to become available (non-blocking for now)
       - name: Wait for Deployments to be Ready
         continue-on-error: true
         run: |
@@ -62,9 +71,10 @@ jobs:
           kubectl wait --for=condition=available --timeout=180s deployment/prometheus -n verkstedt-demo
           kubectl wait --for=condition=available --timeout=180s deployment/grafana -n verkstedt-demo
 
+      # Debugging step: Describe and log everything if something failed
       - name: Debug NGINX Deployment Status
         run: |
-          echo "🧪 Pods in verkstedt-demo:"
+          echo "🧪 Pods:"
           kubectl get pods -n verkstedt-demo -o wide || true
 
           echo "📋 Events:"
@@ -73,7 +83,7 @@ jobs:
           echo "🔍 Describe NGINX deployment:"
           kubectl describe deployment nginx -n verkstedt-demo || true
 
-          echo "📦 Logs from the NGINX pod:"
+          echo "📦 Logs from NGINX pod:"
           POD=$(kubectl get pods -n verkstedt-demo -l app=nginx -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || echo "")
           if [ -n "$POD" ]; then
             kubectl logs "$POD" -n verkstedt-demo || true
@@ -81,11 +91,13 @@ jobs:
             echo "⚠️ No NGINX pod found."
           fi
 
-      - name: Check for Pending Pods
+      # Optional extra debugging if no pods appear
+      - name: Describe Pending Pods (if any)
         run: |
-          echo "Pending pod details:"
+          echo "Describing all pods (may show scheduling issues):"
           kubectl get pods -n verkstedt-demo -o name | xargs -r kubectl describe -n verkstedt-demo || true
 
+      # Clean up all resources
       - name: Cleanup Kubernetes Resources
         run: |
           kubectl delete namespace verkstedt-demo --ignore-not-found=true
